@@ -134,31 +134,6 @@ fun BootingSplash(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center
                 )
-
-
-                if (tips.isNotEmpty()) {
-                    Spacer(modifier = Modifier.height(24.dp))
-                    Box(
-                        modifier = Modifier.fillMaxWidth(),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Crossfade(
-                            targetState = tipIndex,
-                            animationSpec = tween(durationMillis = 600),
-                            label = "tipCrossfade"
-                        ) { idx ->
-                            Text(
-                                text = tips[idx],
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.85f),
-                                textAlign = TextAlign.Center,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 24.dp)
-                            )
-                        }
-                    }
-                }
             }
         }
     }
