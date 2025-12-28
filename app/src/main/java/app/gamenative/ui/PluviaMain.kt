@@ -473,12 +473,8 @@ fun PluviaMain(
                 isAmoled = state.appTheme == AppTheme.AMOLED,
                 style = state.paletteStyle,
             ) {
-                ConnectingServersScreen(
-                    onContinueOffline = {
-                        isConnecting = false
-                        navController.navigate(PluviaScreen.Home.route + "?offline=true")
-                    },
-                )
+                isConnecting = false
+                navController.navigate(PluviaScreen.Home.route + "?offline=true")
             }
             return
         }
