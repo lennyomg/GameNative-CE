@@ -228,69 +228,7 @@ fun XServerScreen(
         }
 
         Timber.i("BackHandler")
-        NavigationDialog(
-            context,
-            object : NavigationDialog.NavigationListener {
-                override fun onNavigationItemSelected(itemId: Int) {
-                    when (itemId) {
-                        NavigationDialog.ACTION_KEYBOARD -> {
-                            val anchor = view // use the same composable root view
-                            val c = if (Build.VERSION.SDK_INT >= 30)
-                                anchor.windowInsetsController else null
-
-                            anchor.post {
-                                if (anchor.windowToken == null) return@post
-                                val show = {
-                                    PostHog.capture(event = "onscreen_keyboard_enabled")
-                                    imm.toggleSoftInput(InputMethodManager.SHOW_FORCED, 0)
-                                }
-                                if (Build.VERSION.SDK_INT > 29 && c != null) {
-                                    anchor.postDelayed({ show() }, 500)  // Pixel/Android-12+ quirk
-                                } else {
-                                    show()
-                                }
-                            }
-                        }
-
-                        NavigationDialog.ACTION_INPUT_CONTROLS -> {
-                            if (areControlsVisible){
-                                PostHog.capture(event = "onscreen_controller_disabled")
-                                hideInputControls();
-                            } else {
-                                PostHog.capture(event = "onscreen_controller_enabled")
-                                val profiles = PluviaApp.inputControlsManager?.getProfiles(false) ?: listOf()
-                                if (profiles.isNotEmpty()) {
-                                    val targetProfile = if (container.isEmulateKeyboardMouse()) {
-                                        val profileName = container.id.toString()
-                                        profiles.firstOrNull { it.name == profileName }
-                                            ?: ContainerUtils.generateOrUpdateEmulationProfile(context, container)
-                                    } else {
-                                        profiles[2]
-                                    }
-                                    showInputControls(targetProfile, xServerView!!.getxServer().winHandler, container)
-                                }
-                            }
-                            areControlsVisible = !areControlsVisible
-                            Timber.d("Controls visibility toggled to: $areControlsVisible")
-                        }
-
-                        NavigationDialog.ACTION_EXIT_GAME -> {
-                            if (currentAppInfo != null) {
-                                PostHog.capture(
-                                    event = "game_closed",
-                                    properties = mapOf(
-                                        "game_name" to currentAppInfo.name,
-                                    ),
-                                )
-                            } else {
-                                PostHog.capture(event = "game_closed")
-                            }
-                            exit(xServerView!!.getxServer().winHandler, PluviaApp.xEnvironment, frameRating, currentAppInfo, container, onExit, navigateBack)
-                        }
-                    }
-                }
-            },
-        ).show()
+        exit(xServerView!!.getxServer().winHandler, PluviaApp.xEnvironment, frameRating, currentAppInfo, container, onExit, navigateBack)
     }
 
     DisposableEffect(container) {
