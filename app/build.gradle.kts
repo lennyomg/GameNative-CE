@@ -173,6 +173,10 @@ android {
         ignoreFormatFailures  = false
     }
 
+    lint {
+        disable.add("ExpiredTargetSdkVersion")
+    }
+
     // build extras needed in libwinlator_bionic.so
 //    externalNativeBuild {
 //        cmake {
