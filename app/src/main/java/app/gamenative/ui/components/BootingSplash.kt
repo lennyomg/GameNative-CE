@@ -5,8 +5,13 @@ import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.*
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.QuestionMark
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -20,19 +25,26 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.tooling.preview.Preview
+import app.gamenative.R
 import app.gamenative.ui.theme.PluviaTheme
+import com.skydoves.landscapist.ImageOptions
+import com.skydoves.landscapist.coil.CoilImage
 import kotlinx.coroutines.delay
+import java.io.File
 import kotlin.random.Random
 
 @Composable
 fun BootingSplash(
     visible: Boolean = true,
     text: String = "Booting...",
-    onBootCompleted: () -> Unit = {}
+    onBootCompleted: () -> Unit = {},
+    iconPath: String? = null
 ) {
     // Tailwind-style “animate-pulse”: opacity 0.3 → 0.5 → 0.3
     val pulseAlpha by rememberInfiniteTransition(label = "pulse")
@@ -59,9 +71,9 @@ fun BootingSplash(
             "Tip: If you are getting a black screen when launching a game, try Open Container and launching the game from A: drive.",
             "Tip: You can add different locations for Custom Games in the settings.",
             "Tip: Turn off \"Show FPS\" to get rid of the mesa overlay.",
-            "Tip: Install packages in A:\\_CommonRedist if your game doesn't launch.",
-            "Tip: You can enable or disable the onscreen controller with your device's back key.",
-            "Tip: You can bring up the keyboard with your device's back key.",
+            "Tip: Install packages in A:\\_CommonRedist if your game doesn\'t launch.",
+            "Tip: You can enable or disable the onscreen controller with your device\'s back key.",
+            "Tip: You can bring up the keyboard with your device\'s back key.",
             "Tip: You can tap with two fingers inside the container to right click.",
             "Tip: If you are using the onscreen controller, you can disable the mouse to prevent accidental touches.",
             "Tip: Report issues on Discord so we can fix them.",
@@ -95,38 +107,39 @@ fun BootingSplash(
                 .background(Color.Black),
             contentAlignment = Alignment.Center
         ) {
-            // Gradient overlay (drawn first, so it sits behind the text)
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .alpha(pulseAlpha)
-                    .background(
-                        Brush.linearGradient(
-                            colors = listOf(
-                                Color(0xFFA21CAF),   // purple start
-                                Color.Black,         // black centre 1
-                                Color.Black,         // black centre 2
-                                Color.Black,
-                                Color.Black,
-                                Color(0xFF06B6D4)    // cyan end
-                            )
-                        )
-                    )
-            )
 
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text(
-                    text = "GameNative",
-                    style = MaterialTheme.typography.headlineSmall.copy(
-                        fontWeight = FontWeight.Bold,
-                        brush = Brush.horizontalGradient(
-                            colors = listOf(
-                                MaterialTheme.colorScheme.primary,
-                                MaterialTheme.colorScheme.tertiary
-                            )
-                        )
+                if (iconPath != null) {
+                    CoilImage(
+                        modifier = Modifier.size(128.dp),
+                        imageModel = { iconPath },
+                        imageOptions = ImageOptions(
+                            contentScale = ContentScale.Fit,
+                            contentDescription = "Game",
+                        ),
+                        loading = {
+                            CircularProgressIndicator()
+                        },
+                        failure = {
+                            Icon(Icons.Filled.QuestionMark, null)
+                        },
+                        previewPlaceholder = painterResource(R.drawable.ic_logo_color),
                     )
-                )
+                } else {
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        text = "GameNative",
+                        style = MaterialTheme.typography.headlineSmall.copy(
+                            fontWeight = FontWeight.Bold,
+                            brush = Brush.horizontalGradient(
+                                colors = listOf(
+                                    MaterialTheme.colorScheme.primary,
+                                    MaterialTheme.colorScheme.tertiary
+                                )
+                            )
+                        ),
+                    )
+                }
                 Spacer(modifier = Modifier.height(16.dp))
                 Text(
                     text = text,

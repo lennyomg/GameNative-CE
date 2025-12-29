@@ -18,6 +18,7 @@ import app.gamenative.service.SteamService
 import app.gamenative.ui.data.MainState
 import app.gamenative.utils.IntentLaunchManager
 import app.gamenative.ui.screen.PluviaScreen
+import app.gamenative.utils.CustomGameScanner
 import app.gamenative.utils.SteamUtils
 import app.gamenative.utils.UpdateInfo
 import com.materialkolor.PaletteStyle
@@ -202,6 +203,10 @@ class MainViewModel @Inject constructor(
         _state.update { it.copy(bootingSplashText = value) }
     }
 
+    fun setBootingSplashIconPath(value: String?) {
+        _state.update { it.copy(bootingSplashIconPath = value) }
+    }
+
     fun setCurrentScreen(currentScreen: String?) {
         val screen = when (currentScreen) {
             PluviaScreen.LoginUser.route -> PluviaScreen.LoginUser
@@ -241,6 +246,8 @@ class MainViewModel @Inject constructor(
     fun launchApp(context: Context, appId: String) {
         // Show booting splash before launching the app
         viewModelScope.launch {
+            val iconPath = CustomGameScanner.findIconFileForCustomGame(context, appId)
+            setBootingSplashIconPath(iconPath)
             setShowBootingSplash(true)
             PluviaApp.events.emit(AndroidEvent.SetAllowedOrientation(PrefManager.allowedOrientation))
 

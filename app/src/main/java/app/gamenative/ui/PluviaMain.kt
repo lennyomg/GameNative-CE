@@ -919,6 +919,7 @@ fun PluviaMain(
             BootingSplash(
                 visible = state.showBootingSplash,
                 text = state.bootingSplashText,
+                iconPath = state.bootingSplashIconPath,
                 onBootCompleted = {
                     viewModel.setShowBootingSplash(false)
                 },
