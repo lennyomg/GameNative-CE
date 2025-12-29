@@ -407,6 +407,71 @@ fun PluviaMain(
         }
     }
 
+    LaunchedEffect(Unit) {
+        if (MainActivity.hasPendingLaunchRequest()) {
+            MainActivity.consumePendingLaunchRequest()?.let { launchRequest ->
+                Timber.tag("IntentLaunch").i("Processing pending launch request for app ${launchRequest.appId} (user is now logged in)")
+
+                // Extract game ID from appId (format: "STEAM_<id>" or "CUSTOM_GAME_<id>")
+                val gameId = ContainerUtils.extractGameIdFromContainerId(launchRequest.appId)
+
+                // First check if it's a Steam game and if it's installed
+                val isSteamInstalled = SteamService.isAppInstalled(gameId)
+
+                // If not installed as Steam game, check if it's a custom game
+                val customGamePath = if (!isSteamInstalled) {
+                    CustomGameScanner.findCustomGameById(gameId)
+                } else {
+                    null
+                }
+
+                // If it's a custom game, update the appId to use CUSTOM_GAME format
+                val finalAppId = if (customGamePath != null && !isSteamInstalled) {
+                    "${GameSource.CUSTOM_GAME.name}_$gameId"
+                } else {
+                    launchRequest.appId
+                }
+
+                // Update launchRequest with the correct appId if it was changed
+                val updatedLaunchRequest = if (finalAppId != launchRequest.appId) {
+                    launchRequest.copy(appId = finalAppId)
+                } else {
+                    launchRequest
+                }
+
+                if (updatedLaunchRequest.containerConfig != null) {
+                    IntentLaunchManager.applyTemporaryConfigOverride(
+                        context,
+                        updatedLaunchRequest.appId,
+                        updatedLaunchRequest.containerConfig,
+                    )
+                    Timber.tag("IntentLaunch").i("Applied container config override for app ${updatedLaunchRequest.appId}")
+                }
+
+                if (navController.currentDestination?.route != PluviaScreen.Home.route) {
+                    navController.navigate(PluviaScreen.Home.route) {
+                        popUpTo(navController.graph.startDestinationId) {
+                            saveState = false
+                        }
+                    }
+                }
+
+                viewModel.setLaunchedAppId(updatedLaunchRequest.appId)
+                viewModel.setBootToContainer(false)
+                preLaunchApp(
+                    context = context,
+                    appId = updatedLaunchRequest.appId,
+                    setLoadingDialogVisible = viewModel::setLoadingDialogVisible,
+                    setLoadingProgress = viewModel::setLoadingDialogProgress,
+                    setLoadingMessage = viewModel::setLoadingDialogMessage,
+                    setMessageDialogState = setMessageDialogState,
+                    onSuccess = viewModel::launchApp,
+                    isOffline = true,
+                )
+            }
+        }
+    }
+
     // Listen for connection state changes
     LaunchedEffect(state.isSteamConnected) {
         if (state.isSteamConnected) {
