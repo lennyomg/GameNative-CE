@@ -1374,7 +1374,8 @@ private fun exit(winHandler: WinHandler?, environment: XEnvironment?, frameRatin
     // PluviaApp.keyboard = null
     frameRating?.writeSessionSummary()
     onExit()
-    navigateBack()
+    // navigateBack()
+    PluviaApp.events.emit(AndroidEvent.EndProcess)
 }
 
 /**
