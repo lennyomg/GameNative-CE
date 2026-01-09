@@ -60,6 +60,6 @@ app/keystores/*
 *.pyc
 __pycache__/
 resign.keystore
-/app/src/main/assets/dexopt/baseline.prof
-/app/src/main/assets/dexopt/baseline.profm
+/app/src/main/assets/dexopt/baseline.*
 /app/src/main/assets/PublicSuffixDatabase.list
+/temp/dexopt/baseline.*
