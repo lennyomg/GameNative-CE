@@ -21,4 +21,5 @@ data class MainState(
     val showBootingSplash: Boolean = false,
     val bootingSplashText: String = "Booting...",
     val bootingSplashIconPath: String? = null,
+    val execArgs: String? = null,
 )

@@ -123,6 +123,7 @@ import com.winlator.PrefManager as WinlatorPrefManager
 fun XServerScreen(
     lifecycleOwner: LifecycleOwner = LocalLifecycleOwner.current,
     appId: String,
+    execArgs: String?,
     bootToContainer: Boolean,
     registerBackAction: ( ( ) -> Unit ) -> Unit,
     navigateBack: () -> Unit,
@@ -228,6 +229,7 @@ fun XServerScreen(
         }
 
         Timber.i("BackHandler")
+
         exit(xServerView!!.getxServer().winHandler, PluviaApp.xEnvironment, frameRating, currentAppInfo, container, onExit, navigateBack)
     }
 
@@ -538,6 +540,7 @@ fun XServerScreen(
                             PluviaApp.xEnvironment = setupXEnvironment(
                                 context,
                                 appId,
+                                execArgs,
                                 bootToContainer,
                                 xServerState,
                                 envVars,
@@ -932,6 +935,7 @@ private fun shiftXEnvironmentToContext(
 private fun setupXEnvironment(
     context: Context,
     appId: String,
+    execArgs: String?,
     bootToContainer: Boolean,
     xServerState: MutableState<XServerState>,
     // xServerViewModel: XServerViewModel,
@@ -1046,12 +1050,24 @@ private fun setupXEnvironment(
             }
         }
 
+        var finalExecArgs = if (execArgs != null && execArgs.isNotEmpty()) {
+            " " + execArgs
+        } else if (container.execArgs.isNotEmpty()) {
+            " " + container.execArgs
+        } else {
+            ""
+        }
+
+        for (drive in Container.drivesIterator(container.drives)) {
+            finalExecArgs = finalExecArgs.replace(drive[1], drive[0] + ":")
+        }
+
         val wow64Mode = container.isWoW64Mode
         guestProgramLauncherComponent.setContainer(container);
         guestProgramLauncherComponent.setWineInfo(xServerState.value.wineInfo);
         val guestExecutable = "wine explorer /desktop=shell," + xServer.screenInfo + " " +
             getWineStartCommand(appId, container, bootToContainer, appLaunchInfo, envVars, guestProgramLauncherComponent) +
-            (if (container.execArgs.isNotEmpty()) " " + container.execArgs else "")
+            finalExecArgs
         guestProgramLauncherComponent.isWoW64Mode = wow64Mode
         guestProgramLauncherComponent.guestExecutable = guestExecutable
         // Set steam type for selecting appropriate box64rc
@@ -1374,7 +1390,7 @@ private fun exit(winHandler: WinHandler?, environment: XEnvironment?, frameRatin
     // PluviaApp.keyboard = null
     frameRating?.writeSessionSummary()
     onExit()
-    // navigateBack()
+    //navigateBack()
     PluviaApp.events.emit(AndroidEvent.EndProcess)
 }
 

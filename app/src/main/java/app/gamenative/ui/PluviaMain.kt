@@ -451,7 +451,7 @@ fun PluviaMain(
                     setLoadingProgress = viewModel::setLoadingDialogProgress,
                     setLoadingMessage = viewModel::setLoadingDialogMessage,
                     setMessageDialogState = setMessageDialogState,
-                    onSuccess = viewModel::launchApp,
+                    onSuccess = { context, appId -> viewModel.launchAppWithArgs(context, appId, launchRequest.execArgs) },
                     isOffline = true,
                 )
             }
@@ -1001,6 +1001,7 @@ fun PluviaMain(
             composable(route = PluviaScreen.XServer.route) {
                 XServerScreen(
                     appId = state.launchedAppId,
+                    execArgs = state.execArgs,
                     bootToContainer = state.bootToContainer,
                     registerBackAction = { cb ->
                         Timber.d("registerBackAction called: $cb")
@@ -1055,7 +1056,7 @@ fun preLaunchApp(
     setLoadingProgress: (Float) -> Unit,
     setLoadingMessage: (String) -> Unit,
     setMessageDialogState: (MessageDialogState) -> Unit,
-    onSuccess: KFunction2<Context, String, Unit>,
+    onSuccess: (Context, String) -> Unit,
     retryCount: Int = 0,
     isOffline: Boolean = false,
 ) {
