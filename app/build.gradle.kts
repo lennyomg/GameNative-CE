@@ -283,3 +283,6 @@ dependencies {
 
     implementation("io.ktor:ktor-client-android:3.1.3")
 }
+
+val customVersion = 5
+android.defaultConfig.versionCode = android.defaultConfig.versionCode!! * 100 + customVersion
