@@ -230,7 +230,13 @@ fun XServerScreen(
 
         Timber.i("BackHandler")
 
-        exit(xServerView!!.getxServer().winHandler, PluviaApp.xEnvironment, frameRating, currentAppInfo, container, onExit, navigateBack)
+        val finalNavigateBack: () -> Unit = if (execArgs != null && execArgs.isNotEmpty()) {
+            { PluviaApp.events.emit(AndroidEvent.EndProcess) }
+        } else {
+            navigateBack
+        }
+
+        exit(xServerView!!.getxServer().winHandler, PluviaApp.xEnvironment, frameRating, currentAppInfo, container, onExit, finalNavigateBack)
     }
 
     DisposableEffect(container) {
@@ -1390,8 +1396,7 @@ private fun exit(winHandler: WinHandler?, environment: XEnvironment?, frameRatin
     // PluviaApp.keyboard = null
     frameRating?.writeSessionSummary()
     onExit()
-    //navigateBack()
-    PluviaApp.events.emit(AndroidEvent.EndProcess)
+    navigateBack()
 }
 
 /**
