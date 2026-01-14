@@ -322,7 +322,6 @@
     <string name="graphics_driver_version">Grafikdriverversion</string>
     <string name="exposed_vulkan_extensions">Eksponerede Vulkan-udvidelser</string>
     <string name="max_device_memory">Maksimal enhedshukommelse</string>
-    <string name="frame_synchronization">Rammens synkronisering</string>
     <string name="use_adrenotools_turnip">Brug Adrenotools Turnip</string>
     <string name="vulkan_version">Vulkan-version</string>
     <string name="image_cache_size">Billedcache-størrelse</string>

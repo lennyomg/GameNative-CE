@@ -322,7 +322,6 @@
     <string name="graphics_driver_version">Versão do Driver Gráfico</string>
     <string name="exposed_vulkan_extensions">Extensões Vulkan Expostas</string>
     <string name="max_device_memory">Memória Máxima do Dispositivo</string>
-    <string name="frame_synchronization">Sincronização de Quadros</string>
     <string name="use_adrenotools_turnip">Usar Adrenotools Turnip</string>
     <string name="vulkan_version">Versão do Vulkan</string>
     <string name="image_cache_size">Tamanho do Cache de Imagens</string>

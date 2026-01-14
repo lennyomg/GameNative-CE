@@ -5,6 +5,7 @@ import android.content.Intent
 import app.gamenative.data.GameSource
 import com.winlator.container.Container
 import com.winlator.container.ContainerData
+import com.winlator.container.ContainerManager
 import com.winlator.core.DXVKHelper
 import org.json.JSONObject
 import timber.log.Timber
@@ -16,15 +17,18 @@ object IntentLaunchManager {
 
     private const val EXTRA_APP_ID = "app_id"
     private const val EXTRA_CONTAINER_CONFIG = "container_config"
+    private const val EXTRA_EXEC_ARGS = "exec_args"
+    private const val EXTRA_CART = "cart"
     private const val ACTION_LAUNCH_GAME = "app.gamenative.LAUNCH_GAME"
     private const val MAX_CONFIG_JSON_SIZE = 50000 // 50KB limit to prevent memory exhaustion
 
     data class LaunchRequest(
         val appId: String,
         val containerConfig: ContainerData? = null,
+        val execArgs: String? = null,
     )
 
-    fun parseLaunchIntent(intent: Intent): LaunchRequest? {
+    fun parseLaunchIntent(intent: Intent, context: Context): LaunchRequest? {
         Timber.d("[IntentLaunchManager]: Parsing intent: action=${intent.action}")
 
         if (intent.action != ACTION_LAUNCH_GAME) {
@@ -32,18 +36,47 @@ object IntentLaunchManager {
             return null
         }
 
-        val gameId = intent.getIntExtra(EXTRA_APP_ID, -1)
-        Timber.d("[IntentLaunchManager]: Extracted app_id: $gameId from intent extras")
+        var appId: String? = null
 
-        if (gameId <= 0) {
-            Timber.w("[IntentLaunchManager]: Invalid or missing app_id in launch intent: $gameId")
+        var execArgs = intent.getStringExtra(EXTRA_EXEC_ARGS)
+        Timber.d("[IntentLaunchManager]: Extracted exec_args: $execArgs from intent extras")
+
+        val cart = intent.getStringExtra(EXTRA_CART)
+        Timber.d("[IntentLaunchManager]: Extracted cart: $cart from intent extras")
+
+        if (cart != null) {
+
+            val container = ContainerManager(context).containers.find { it.executablePath != null && it.executablePath.contains("pico8", ignoreCase = true) }
+            if (container != null) {
+                appId = container.id
+            }
+
+            if (cart.contains("splore", ignoreCase = true)) {
+                execArgs = "-home A:/home -splore"
+            } else if (cart.endsWith(".png", ignoreCase = true)) {
+                execArgs = "-home A:/home -run \"${cart}\""
+            }
+
+        } else {
+
+            val gameId = intent.getIntExtra(EXTRA_APP_ID, -1)
+            Timber.d("[IntentLaunchManager]: Extracted app_id: $gameId from intent extras")
+
+            if (gameId <= 0) {
+                Timber.w("[IntentLaunchManager]: Invalid or missing app_id in launch intent: $gameId")
+                return null
+            }
+
+            appId = "${GameSource.STEAM.name}_$gameId"
+            Timber.d("[IntentLaunchManager]: Converted to appId: $appId")
+        }
+
+        if (appId == null) {
+            Timber.w("[IntentLaunchManager]: Missing app_id in launch intent")
             return null
         }
 
-        val appId = "${GameSource.STEAM.name}_$gameId"
-        Timber.d("[IntentLaunchManager]: Converted to appId: $appId")
-
-        val containerConfigJson = intent.getStringExtra(EXTRA_CONTAINER_CONFIG)
+        var containerConfigJson = intent.getStringExtra(EXTRA_CONTAINER_CONFIG)
         val containerConfig = if (containerConfigJson != null) {
             try {
                 parseContainerConfig(containerConfigJson)
@@ -55,7 +88,7 @@ object IntentLaunchManager {
             null
         }
 
-        return LaunchRequest(appId, containerConfig)
+        return LaunchRequest(appId, containerConfig, execArgs)
     }
 
     fun applyTemporaryConfigOverride(context: Context, appId: String, configOverride: ContainerData) {

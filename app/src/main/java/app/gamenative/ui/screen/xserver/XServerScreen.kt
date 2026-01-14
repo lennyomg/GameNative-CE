@@ -150,6 +150,7 @@ import com.winlator.PrefManager as WinlatorPrefManager
 fun XServerScreen(
     lifecycleOwner: LifecycleOwner = LocalLifecycleOwner.current,
     appId: String,
+    execArgs: String?,
     bootToContainer: Boolean,
     registerBackAction: ( ( ) -> Unit ) -> Unit,
     navigateBack: () -> Unit,
@@ -266,150 +267,14 @@ fun XServerScreen(
         }
 
         Timber.i("BackHandler")
-        NavigationDialog(
-            context,
-            object : NavigationDialog.NavigationListener {
-                override fun onNavigationItemSelected(itemId: Int) {
-                    when (itemId) {
-                        NavigationDialog.ACTION_KEYBOARD -> {
-                            val anchor = view // use the same composable root view
-                            val c = if (Build.VERSION.SDK_INT >= 30)
-                                anchor.windowInsetsController else null
 
-                            anchor.post {
-                                if (anchor.windowToken == null) return@post
-                                val show = {
-                                    PostHog.capture(event = "onscreen_keyboard_enabled")
-                                    imm.toggleSoftInput(InputMethodManager.SHOW_FORCED, 0)
-                                }
-                                if (Build.VERSION.SDK_INT > 29 && c != null) {
-                                    anchor.postDelayed({ show() }, 500)  // Pixel/Android-12+ quirk
-                                } else {
-                                    show()
-                                }
-                            }
-                        }
+        val finalNavigateBack: () -> Unit = if (execArgs != null && execArgs.isNotEmpty()) {
+            { PluviaApp.events.emit(AndroidEvent.EndProcess) }
+        } else {
+            navigateBack
+        }
 
-                        NavigationDialog.ACTION_INPUT_CONTROLS -> {
-                            if (areControlsVisible){
-                                PostHog.capture(event = "onscreen_controller_disabled")
-                                hideInputControls();
-                            } else {
-                                PostHog.capture(event = "onscreen_controller_enabled")
-                                val manager = PluviaApp.inputControlsManager
-                                val profiles = manager?.getProfiles(false) ?: listOf()
-                                if (profiles.isNotEmpty()) {
-                                    // Use current profile (custom or Profile 0)
-                                    val profileIdStr = container.getExtra("profileId", "0")
-                                    val profileId = profileIdStr.toIntOrNull() ?: 0
-                                    val targetProfile = if (profileId != 0) {
-                                        manager?.getProfile(profileId)
-                                    } else {
-                                        null
-                                    } ?: manager?.getProfile(0) ?: profiles.getOrNull(2) ?: profiles.first()
-
-                                    showInputControls(targetProfile, xServerView!!.getxServer().winHandler, container)
-                                }
-                            }
-                            areControlsVisible = !areControlsVisible
-                        }
-
-                        NavigationDialog.ACTION_EDIT_CONTROLS -> {
-                            PostHog.capture(event = "edit_controls_in_game")
-
-                            // Get or create profile for this container
-                            val manager = PluviaApp.inputControlsManager ?: InputControlsManager(context)
-                            val allProfiles = manager.getProfiles(false)
-
-                            val profileIdStr = container.getExtra("profileId", "0")
-                            val profileId = profileIdStr.toIntOrNull() ?: 0
-
-                            var activeProfile = if (profileId != 0) {
-                                manager.getProfile(profileId)
-                            } else {
-                                null
-                            }
-
-                            // If no custom profile exists, create one automatically
-                            if (activeProfile == null) {
-                                val sourceProfile = manager.getProfile(0)
-                                    ?: allProfiles.firstOrNull { it.id == 2 }
-                                    ?: allProfiles.firstOrNull()
-
-                                if (sourceProfile != null) {
-                                    try {
-                                        // Create game-specific profile by duplicating Profile 0
-                                        activeProfile = manager.duplicateProfile(sourceProfile)
-
-                                        // Rename to game name
-                                        val gameName = currentAppInfo?.name ?: container.name
-                                        activeProfile.setName("$gameName - Controls")
-                                        activeProfile.save()
-
-                                        // Associate with container using extraData and save
-                                        container.putExtra("profileId", activeProfile.id.toString())
-                                        container.saveData()
-
-                                        // Apply the new profile to InputControlsView
-                                        PluviaApp.inputControlsView?.setProfile(activeProfile)
-                                    } catch (e: Exception) {
-                                        Timber.e(e, "Failed to auto-create profile for container %s", container.name)
-                                        // Fallback to existing profile
-                                        activeProfile = sourceProfile
-                                    }
-                                }
-                            }
-
-                            // Enable edit mode and show controls if not visible
-                            if (activeProfile != null) {
-                                // Capture snapshot of element positions before entering edit mode
-                                val profile = PluviaApp.inputControlsView?.profile
-                                if (profile != null) {
-                                    val snapshot = mutableMapOf<com.winlator.inputcontrols.ControlElement, Pair<Int, Int>>()
-                                    profile.elements.forEach { element ->
-                                        snapshot[element] = Pair(element.x.toInt(), element.y.toInt())
-                                    }
-                                    elementPositionsSnapshot = snapshot
-                                }
-
-                                isEditMode = true
-                                PluviaApp.inputControlsView?.setEditMode(true)
-                                PluviaApp.inputControlsView?.let { icView ->
-                                    // Wait for view to be laid out before loading elements
-                                    icView.post {
-                                        activeProfile.loadElements(icView)
-                                    }
-                                }
-
-                                if (!areControlsVisible) {
-                                    showInputControls(activeProfile, xServerView!!.getxServer().winHandler, container)
-                                    areControlsVisible = true
-                                }
-                            }
-                        }
-
-                        NavigationDialog.ACTION_EDIT_PHYSICAL_CONTROLLER -> {
-                            PostHog.capture(event = "edit_physical_controller_from_menu")
-                            showPhysicalControllerDialog = true
-                        }
-
-                        NavigationDialog.ACTION_EXIT_GAME -> {
-                            if (currentAppInfo != null) {
-                                PostHog.capture(
-                                    event = "game_closed",
-                                    properties = mapOf(
-                                        "game_name" to currentAppInfo.name,
-                                    ),
-                                )
-                            } else {
-                                PostHog.capture(event = "game_closed")
-                            }
-                            exit(xServerView!!.getxServer().winHandler, PluviaApp.xEnvironment, frameRating, currentAppInfo, container, onExit, navigateBack)
-                        }
-                    }
-                }
-            }
-        ).show()
+        exit(xServerView!!.getxServer().winHandler, PluviaApp.xEnvironment, frameRating, currentAppInfo, container, onExit, finalNavigateBack)
     }
 
     DisposableEffect(container) {
@@ -715,6 +580,7 @@ fun XServerScreen(
                             PluviaApp.xEnvironment = setupXEnvironment(
                                 context,
                                 appId,
+                                execArgs,
                                 bootToContainer,
                                 xServerState,
                                 envVars,
@@ -1387,6 +1253,7 @@ private fun shiftXEnvironmentToContext(
 private fun setupXEnvironment(
     context: Context,
     appId: String,
+    execArgs: String?,
     bootToContainer: Boolean,
     xServerState: MutableState<XServerState>,
     // xServerViewModel: XServerViewModel,
@@ -1501,12 +1368,24 @@ private fun setupXEnvironment(
             }
         }
 
+        var finalExecArgs = if (execArgs != null && execArgs.isNotEmpty()) {
+            " " + execArgs
+        } else if (container.execArgs.isNotEmpty()) {
+            " " + container.execArgs
+        } else {
+            ""
+        }
+
+        for (drive in Container.drivesIterator(container.drives)) {
+            finalExecArgs = finalExecArgs.replace(drive[1], drive[0] + ":")
+        }
+
         val wow64Mode = container.isWoW64Mode
         guestProgramLauncherComponent.setContainer(container);
         guestProgramLauncherComponent.setWineInfo(xServerState.value.wineInfo);
         val guestExecutable = "wine explorer /desktop=shell," + xServer.screenInfo + " " +
             getWineStartCommand(appId, container, bootToContainer, appLaunchInfo, envVars, guestProgramLauncherComponent) +
-            (if (container.execArgs.isNotEmpty()) " " + container.execArgs else "")
+            finalExecArgs
         guestProgramLauncherComponent.isWoW64Mode = wow64Mode
         guestProgramLauncherComponent.guestExecutable = guestExecutable
         // Set steam type for selecting appropriate box64rc

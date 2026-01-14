@@ -119,20 +119,6 @@ fun PluviaMain(
 
     var updateInfo by remember { mutableStateOf<UpdateInfo?>(null) }
 
-    // Check for updates on app start
-    LaunchedEffect(Unit) {
-        val checkedUpdateInfo = UpdateChecker.checkForUpdate(context)
-        if (checkedUpdateInfo != null) {
-            val appVersionCode = BuildConfig.VERSION_CODE
-            val serverVersionCode = checkedUpdateInfo.versionCode
-            Timber.i("Update check: app versionCode=$appVersionCode, server versionCode=$serverVersionCode")
-            if (appVersionCode < serverVersionCode) {
-                updateInfo = checkedUpdateInfo
-                viewModel.setUpdateInfo(checkedUpdateInfo)
-            }
-        }
-    }
-
     LaunchedEffect(Unit) {
         viewModel.uiEvent.collect { event ->
             when (event) {
@@ -407,6 +393,71 @@ fun PluviaMain(
         }
     }
 
+    LaunchedEffect(Unit) {
+        if (MainActivity.hasPendingLaunchRequest()) {
+            MainActivity.consumePendingLaunchRequest()?.let { launchRequest ->
+                Timber.tag("IntentLaunch").i("Processing pending launch request for app ${launchRequest.appId} (user is now logged in)")
+
+                // Extract game ID from appId (format: "STEAM_<id>" or "CUSTOM_GAME_<id>")
+                val gameId = ContainerUtils.extractGameIdFromContainerId(launchRequest.appId)
+
+                // First check if it's a Steam game and if it's installed
+                val isSteamInstalled = SteamService.isAppInstalled(gameId)
+
+                // If not installed as Steam game, check if it's a custom game
+                val customGamePath = if (!isSteamInstalled) {
+                    CustomGameScanner.findCustomGameById(gameId)
+                } else {
+                    null
+                }
+
+                // If it's a custom game, update the appId to use CUSTOM_GAME format
+                val finalAppId = if (customGamePath != null && !isSteamInstalled) {
+                    "${GameSource.CUSTOM_GAME.name}_$gameId"
+                } else {
+                    launchRequest.appId
+                }
+
+                // Update launchRequest with the correct appId if it was changed
+                val updatedLaunchRequest = if (finalAppId != launchRequest.appId) {
+                    launchRequest.copy(appId = finalAppId)
+                } else {
+                    launchRequest
+                }
+
+                if (updatedLaunchRequest.containerConfig != null) {
+                    IntentLaunchManager.applyTemporaryConfigOverride(
+                        context,
+                        updatedLaunchRequest.appId,
+                        updatedLaunchRequest.containerConfig,
+                    )
+                    Timber.tag("IntentLaunch").i("Applied container config override for app ${updatedLaunchRequest.appId}")
+                }
+
+                if (navController.currentDestination?.route != PluviaScreen.Home.route) {
+                    navController.navigate(PluviaScreen.Home.route) {
+                        popUpTo(navController.graph.startDestinationId) {
+                            saveState = false
+                        }
+                    }
+                }
+
+                viewModel.setLaunchedAppId(updatedLaunchRequest.appId)
+                viewModel.setBootToContainer(false)
+                preLaunchApp(
+                    context = context,
+                    appId = updatedLaunchRequest.appId,
+                    setLoadingDialogVisible = viewModel::setLoadingDialogVisible,
+                    setLoadingProgress = viewModel::setLoadingDialogProgress,
+                    setLoadingMessage = viewModel::setLoadingDialogMessage,
+                    setMessageDialogState = setMessageDialogState,
+                    onSuccess = { context, appId -> viewModel.launchAppWithArgs(context, appId, launchRequest.execArgs) },
+                    isOffline = true,
+                )
+            }
+        }
+    }
+
     // Listen for connection state changes
     LaunchedEffect(state.isSteamConnected) {
         if (state.isSteamConnected) {
@@ -473,12 +524,8 @@ fun PluviaMain(
                 isAmoled = state.appTheme == AppTheme.AMOLED,
                 style = state.paletteStyle,
             ) {
-                ConnectingServersScreen(
-                    onContinueOffline = {
-                        isConnecting = false
-                        navController.navigate(PluviaScreen.Home.route + "?offline=true")
-                    },
-                )
+                isConnecting = false
+                navController.navigate(PluviaScreen.Home.route + "?offline=true")
             }
             return
         }
@@ -858,6 +905,7 @@ fun PluviaMain(
             BootingSplash(
                 visible = state.showBootingSplash,
                 text = state.bootingSplashText,
+                iconPath = state.bootingSplashIconPath,
                 onBootCompleted = {
                     viewModel.setShowBootingSplash(false)
                 },
@@ -953,6 +1001,7 @@ fun PluviaMain(
             composable(route = PluviaScreen.XServer.route) {
                 XServerScreen(
                     appId = state.launchedAppId,
+                    execArgs = state.execArgs,
                     bootToContainer = state.bootToContainer,
                     registerBackAction = { cb ->
                         Timber.d("registerBackAction called: $cb")
@@ -1007,7 +1056,7 @@ fun preLaunchApp(
     setLoadingProgress: (Float) -> Unit,
     setLoadingMessage: (String) -> Unit,
     setMessageDialogState: (MessageDialogState) -> Unit,
-    onSuccess: KFunction2<Context, String, Unit>,
+    onSuccess: (Context, String) -> Unit,
     retryCount: Int = 0,
     isOffline: Boolean = false,
 ) {

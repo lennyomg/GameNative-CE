@@ -199,7 +199,7 @@ class MainActivity : ComponentActivity() {
     private fun handleLaunchIntent(intent: Intent) {
         Timber.d("[IntentLaunch]: handleLaunchIntent called with action=${intent.action}")
         try {
-            val launchRequest = IntentLaunchManager.parseLaunchIntent(intent)
+            val launchRequest = IntentLaunchManager.parseLaunchIntent(intent, applicationContext)
             if (launchRequest != null) {
                 Timber.d("[IntentLaunch]: Received external launch intent for app ${launchRequest.appId}")
 

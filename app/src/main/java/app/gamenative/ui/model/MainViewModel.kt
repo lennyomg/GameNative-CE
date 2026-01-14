@@ -18,6 +18,7 @@ import app.gamenative.service.SteamService
 import app.gamenative.ui.data.MainState
 import app.gamenative.utils.IntentLaunchManager
 import app.gamenative.ui.screen.PluviaScreen
+import app.gamenative.utils.CustomGameScanner
 import app.gamenative.utils.SteamUtils
 import app.gamenative.utils.UpdateInfo
 import com.materialkolor.PaletteStyle
@@ -202,6 +203,14 @@ class MainViewModel @Inject constructor(
         _state.update { it.copy(bootingSplashText = value) }
     }
 
+    fun setBootingSplashIconPath(value: String?) {
+        _state.update { it.copy(bootingSplashIconPath = value) }
+    }
+
+    fun setExecArgs(value: String?){
+        _state.update { it.copy(execArgs = value) }
+    }
+
     fun setCurrentScreen(currentScreen: String?) {
         val screen = when (currentScreen) {
             PluviaScreen.LoginUser.route -> PluviaScreen.LoginUser
@@ -238,10 +247,13 @@ class MainViewModel @Inject constructor(
         _state.update { it.copy(bootToContainer = value) }
     }
 
-    fun launchApp(context: Context, appId: String) {
+    fun launchAppWithArgs(context: Context, appId: String, execArgs: String?) {
         // Show booting splash before launching the app
         viewModelScope.launch {
+            val iconPath = CustomGameScanner.findIconFileForCustomGame(context, appId)
+            setBootingSplashIconPath(iconPath)
             setShowBootingSplash(true)
+            setExecArgs(execArgs)
             PluviaApp.events.emit(AndroidEvent.SetAllowedOrientation(PrefManager.allowedOrientation))
 
             val apiJob = viewModelScope.async(Dispatchers.IO) {
@@ -264,6 +276,10 @@ class MainViewModel @Inject constructor(
 
             _uiEvent.send(MainUiEvent.LaunchApp)
         }
+    }
+
+    fun launchApp(context: Context, appId: String) {
+        launchAppWithArgs(context, appId, null)
     }
 
     fun exitSteamApp(context: Context, appId: String) {
