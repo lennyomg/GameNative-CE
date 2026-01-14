@@ -38,19 +38,20 @@ object ContainerUtils {
     fun setContainerDefaults(context: Context){
         // Override default driver and DXVK version based on Turnip capability
         if (GPUInformation.isTurnipCapable(context)) {
-            DefaultVersion.VARIANT = Container.GLIBC
-            DefaultVersion.DEFAULT_GRAPHICS_DRIVER = "turnip"
-            DefaultVersion.DXVK = "2.6.1-gplasync"
+            DefaultVersion.VARIANT = Container.BIONIC
+            DefaultVersion.WINE_VERSION = "proton-9.0-arm64ec"
+            DefaultVersion.DEFAULT_GRAPHICS_DRIVER = "Wrapper"
+            DefaultVersion.DXVK = "async-1.10.3"
             DefaultVersion.VKD3D = "2.14.1"
             DefaultVersion.WRAPPER = "turnip25.3.0_R3_Auto"
             DefaultVersion.STEAM_TYPE = Container.STEAM_TYPE_NORMAL
-            DefaultVersion.ASYNC_CACHE = "1"
+            DefaultVersion.ASYNC_CACHE = "0"
         } else {
             DefaultVersion.VARIANT = Container.BIONIC
             DefaultVersion.WINE_VERSION = "proton-9.0-arm64ec"
-            DefaultVersion.DEFAULT_GRAPHICS_DRIVER = "Wrapper-leegao"
+            DefaultVersion.DEFAULT_GRAPHICS_DRIVER = "Wrapper"
             DefaultVersion.DXVK = "async-1.10.3"
-            DefaultVersion.VKD3D = "2.6"
+            DefaultVersion.VKD3D = "2.14.1"
             DefaultVersion.STEAM_TYPE = Container.STEAM_TYPE_LIGHT
             DefaultVersion.ASYNC_CACHE = "0"
         }
@@ -760,39 +761,47 @@ object ContainerUtils {
         // Delete any existing FEXCore config files (we use environment variables only)
         FEXCoreManager.deleteConfigFiles(context, container.id)
 
-        // Ensure Custom Games have the A: drive mapped to the game folder
+        // Ensure all games have the A: drive mapped to the game folder
         val gameSource = extractGameSourceFromContainerId(appId)
-        if (gameSource == GameSource.CUSTOM_GAME) {
-            val gameFolderPath = CustomGameScanner.getFolderPathFromAppId(appId)
-            if (gameFolderPath != null) {
-                // Check if A: drive is already mapped to the correct path
-                var hasCorrectADrive = false
-                for (drive in Container.drivesIterator(container.drives)) {
-                    if (drive[0] == "A" && drive[1] == gameFolderPath) {
-                        hasCorrectADrive = true
-                        break
+        val gameFolderPath: String? = when (gameSource) {
+            GameSource.STEAM -> {
+                val gameId = extractGameIdFromContainerId(appId)
+                SteamService.getAppDirPath(gameId)
+            }
+            GameSource.CUSTOM_GAME -> {
+                CustomGameScanner.getFolderPathFromAppId(appId)
+            }
+            else -> null
+        }
+
+        if (gameFolderPath != null) {
+            // Check if A: drive is already mapped to the correct path
+            var hasCorrectADrive = false
+            for (drive in Container.drivesIterator(container.drives)) {
+                if (drive[0] == "A" && drive[1] == gameFolderPath) {
+                    hasCorrectADrive = true
+                    break
+                }
+            }
+
+            // If A: drive is not mapped correctly, update it
+            if (!hasCorrectADrive) {
+                val currentDrives = container.drives
+                // Rebuild drives string, excluding existing A: drive and adding new one
+                val drivesBuilder = StringBuilder()
+                drivesBuilder.append("A:$gameFolderPath")
+
+                // Add all other drives (excluding A:)
+                for (drive in Container.drivesIterator(currentDrives)) {
+                    if (drive[0] != "A") {
+                        drivesBuilder.append("${drive[0]}:${drive[1]}")
                     }
                 }
 
-                // If A: drive is not mapped correctly, update it
-                if (!hasCorrectADrive) {
-                    val currentDrives = container.drives
-                    // Rebuild drives string, excluding existing A: drive and adding new one
-                    val drivesBuilder = StringBuilder()
-                    drivesBuilder.append("A:$gameFolderPath")
-
-                    // Add all other drives (excluding A:)
-                    for (drive in Container.drivesIterator(currentDrives)) {
-                        if (drive[0] != "A") {
-                            drivesBuilder.append("${drive[0]}:${drive[1]}")
-                        }
-                    }
-
-                    val updatedDrives = drivesBuilder.toString()
-                    container.drives = updatedDrives
-                    container.saveData()
-                    Timber.d("Updated container drives to include A: drive mapping: $updatedDrives")
-                }
+                val updatedDrives = drivesBuilder.toString()
+                container.drives = updatedDrives
+                container.saveData()
+                Timber.d("Updated container drives to include A: drive mapping: $updatedDrives")
             }
         }
 
@@ -889,5 +898,116 @@ object ContainerUtils {
             // Add other platforms here..
             else -> GameSource.STEAM // default fallback
         }
+    }
+
+    /**
+     * Gets the file system path for the container's A: drive
+     */
+    fun getADrivePath(drives: String): String? {
+        // Use the existing Container.drivesIterator logic
+        for (drive in Container.drivesIterator(drives)) {
+            if (drive[0] == "A") {
+                return drive[1]
+            }
+        }
+        return null
+    }
+
+    /**
+     * Scans the container's A: drive for all .exe files
+     */
+    fun scanExecutablesInADrive(drives: String): List<String> {
+        val executables = mutableListOf<String>()
+
+        try {
+            // Find the A: drive path from container drives
+            val aDrivePath = getADrivePath(drives)
+            if (aDrivePath == null) {
+                Timber.w("No A: drive found in container drives")
+                return emptyList()
+            }
+
+            val aDir = File(aDrivePath)
+            if (!aDir.exists() || !aDir.isDirectory) {
+                Timber.w("A: drive path does not exist or is not a directory: $aDrivePath")
+                return emptyList()
+            }
+
+            Timber.d("Scanning for executables in A: drive: $aDrivePath")
+
+            // Recursively scan for .exe files using listFiles with depth limit
+            fun scanRecursive(dir: File, baseDir: File, depth: Int = 0, maxDepth: Int = 10) {
+                if (depth > maxDepth) return
+
+                dir.listFiles()?.forEach { file ->
+                    if (file.isDirectory) {
+                        scanRecursive(file, baseDir, depth + 1, maxDepth)
+                    } else if (file.isFile && file.name.lowercase().endsWith(".exe")) {
+                        // Convert to relative Windows path format
+                        val relativePath = baseDir.toURI().relativize(file.toURI()).path
+                        executables.add(relativePath)
+                    }
+                }
+            }
+
+            scanRecursive(aDir, aDir)
+
+            // Sort alphabetically and prioritize common game executables
+            executables.sortWith { a, b ->
+                val aScore = getExecutablePriority(a)
+                val bScore = getExecutablePriority(b)
+
+                if (aScore != bScore) {
+                    bScore.compareTo(aScore) // Higher priority first
+                } else {
+                    a.compareTo(b, ignoreCase = true) // Alphabetical
+                }
+            }
+
+            Timber.d("Found ${executables.size} executables in A: drive")
+
+        } catch (e: Exception) {
+            Timber.e(e, "Error scanning A: drive for executables")
+        }
+
+        return executables
+    }
+
+    /**
+     * Assigns priority scores to executables for better sorting
+     */
+    private fun getExecutablePriority(exePath: String): Int {
+        val fileName = exePath.substringAfterLast('\\').lowercase()
+        val baseName = fileName.substringBeforeLast('.')
+
+        return when {
+            // Highest priority: common game executable patterns
+            fileName.contains("game") -> 100
+            fileName.contains("start") -> 85
+            fileName.contains("main") -> 80
+            fileName.contains("launcher") && !fileName.contains("unins") -> 75
+
+            // High priority: probable main executables
+            baseName.length >= 4 && !isSystemExecutable(fileName) -> 70
+
+            // Medium priority: any non-system executable
+            !isSystemExecutable(fileName) -> 50
+
+            // Low priority: system/utility executables
+            else -> 10
+        }
+    }
+
+    /**
+     * Checks if an executable is likely a system/utility file
+     */
+    private fun isSystemExecutable(fileName: String): Boolean {
+        val systemKeywords = listOf(
+            "unins", "setup", "install", "config", "crash", "handler",
+            "viewer", "compiler", "tool", "redist", "vcredist", "directx",
+            "steam", "origin", "uplay", "epic", "battlenet"
+        )
+
+        return systemKeywords.any { fileName.contains(it) }
     }
 }
