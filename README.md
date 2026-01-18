@@ -1,47 +1,45 @@
-# GameNative
+# GameNative: Cart Edition
+
+GameNative allows you to play Windows games on Android devices. This fork has tweaks and optimizations for streamlining the user experience with **PICO-8** on your favorite Android retro handheld. It should also work with other custom games. Check the [PICO-8 guide](pico8.md).
+
+[![GameNative CE demo](media/ce-demo.png)](https://youtu.be/Em4lBr4ipWs)
+
+Changes in **Cart Edition**:
+* Always offline mode. You don't need Steam credentials; this greatly improves game launch time.
+* No tips on the game launch screen. Reading the same tips over and over becomes annoying very quickly.
+* A single press of the back button exits the app and returns you to the Android home screen. You can switch between games very easily.
+* The launch screen is black and shows an icon for the launching app.
+* The app splash screen is black.
+* No auto-update checks.
+* New `-e exec_args {any}` command-line parameter (self-explanatory).
+* New `-e cart {cart_file_path_png}` command-line parameter to run PICO-8 games.
 
 
-GameNative allows you to play games you own on Steam directly on Android devices.
+Known issues:
+* Sometimes it shows the Steam logon screen. If this happens, clear the app from recents or restart your device and try again.
+* If you update the app, custom games may stop working. If this happens, delete the game container and create a new one.
+* This fork has the same app ID as the original GameNative, so you cannot have both installed at the same time.
 
-[Playing Stray on Poco F6](https://github.com/user-attachments/assets/1870fd14-7de9-4054-ba92-d3a5c73686b5)
+Thanks to the GameNative team for their work. Check out [the original project](https://github.com/utkarshdalal/GameNative) and their [Discord server](https://discord.gg/2hKv4VfZfE).
 
-This is a fork of [Pluvia](https://github.com/oxters168/Pluvia), a Steam client for Android.
+**Disclaimers**
 
-## How to Use
+* This project is not affiliated with the GameNative team or PICO-8 (Lexaloffle).
+* PICO‑8 is proprietary software; you must own a valid license to use PICO‑8. This repository does not include PICO‑8 binaries, manuals, or copyrighted games.
+* All in-app links redirect to original GameNative resources (including donation links).
+* The app may download files from GameNative servers; please review GameNative's privacy policy.
+* Use this software only with games and files you legally own. Do not use it for piracy or illegal purposes.
+* This software is provided "AS IS". The maintainer is not liable for any damages, costs, or losses that may occur from using this software.
 
-(Note that GameNative is still in its early stages, and all games may not work, or may require tweaking to get working well)
-1. Download the latest release [here](https://github.com/utkarshdalal/GameNative/releases/download/v0.6.0/gamenative-v0.6.0.apk)
-2. Install the APK on your Android device
-3. Login to your Steam account
-4. Install your game
-5. Hit play and enjoy!
+**Technical details**
 
-## Support
-To report issues or receive support, join the [Discord server](https://discord.gg/2hKv4VfZfE)
+_am start_ example:
 
-You can support GameNative on Ko-fi at https://ko-fi.com/gamenative
+```
+am start -n app.gamenative/app.gamenative.MainActivity -a app.gamenative.LAUNCH_GAME -e cart {cart_file_path_png}
+```
+```
+am start -n app.gamenative/app.gamenative.MainActivity -a app.gamenative.LAUNCH_GAME -ei app_id {number} -e exec_args {any_text}
+```
 
-## Building
-### IF YOU JUST WANT TO USE THE APP, PLEASE SEE THE HOW TO USE SECTION ABOVE. THIS IS ONLY NEEDED IF YOU WANT TO CONTRIBUTE FOR DEVELOPMENT.
-1. I use a normal build in Android studio. Hit me up if you can't figure out how to build.
-2. You may need to download some additional files and place them in the `src/main/assets` folder.
-These files are available on request for legitimate development purposes. Please write to me on Discord and I can share them with you there.
-3. **SteamGridDB API Key (Optional):** To enable automatic fetching of game images for Custom Games, add your SteamGridDB API key to `local.properties`:
-   ```
-   STEAMGRIDDB_API_KEY=your_api_key_here
-   ```
-   Get your API key from: https://www.steamgriddb.com/profile/preferences
-   If the API key is not configured, the app will log a message but continue to work normally without fetching images.
-
-## Community
-
-Join our [Discord server](https://discord.gg/2hKv4VfZfE) for support and updates.
-
-## License
-[GPL 3.0](https://github.com/utkarshdalal/GameNative/blob/master/LICENSE)
-
-## Privacy Policy
-[Privacy Policy](https://github.com/utkarshdalal/GameNative/blob/master/PrivacyPolicy/README.md)
-
-**Disclaimer: This software is intended for playing games that you legally own. Do not use this software for piracy or any other illegal purposes. The maintainer of this fork assumes no
-responsibility for misuse.**
+Clone the repo with its submodules. Build this project in Android Studio using the DEBUG or RELEASE configuration. No additional files are needed.
