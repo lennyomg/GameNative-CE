@@ -467,7 +467,6 @@
     <string name="graphics_driver_version">图形驱动程序版本</string>
     <string name="exposed_vulkan_extensions">启用 Vulkan 扩展功能</string>
     <string name="max_device_memory">最大内存容量</string>
-    <string name="frame_synchronization">帧同步</string>
     <string name="use_adrenotools_turnip">使用 Adrenotools Turnip</string>
     <string name="vulkan_version">Vulkan 版本</string>
     <string name="image_cache_size">图像缓存大小</string>
