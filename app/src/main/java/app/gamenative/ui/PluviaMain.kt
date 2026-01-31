@@ -388,6 +388,14 @@ fun PluviaMain(
                 isConnecting = true
                 context.startForegroundService(Intent(context, SteamService::class.java))
             }
+
+            // Start GOGService if user has GOG credentials
+            if (app.gamenative.service.gog.GOGService.hasStoredCredentials(context) &&
+                !app.gamenative.service.gog.GOGService.isRunning) {
+                Timber.d("[PluviaMain]: Starting GOGService for logged-in user")
+                app.gamenative.service.gog.GOGService.start(context)
+            }
+
             if (SteamService.isLoggedIn && !SteamService.isGameRunning && state.currentScreen == PluviaScreen.LoginUser) {
                 navController.navigate(PluviaScreen.Home.route)
             }
@@ -1149,6 +1157,15 @@ fun preLaunchApp(
                 context = context,
             ).await()
         }
+        if (container.isLaunchRealSteam && !SteamService.isFileInstallable(context, "steam-token.tzst")) {
+            setLoadingMessage("Downloading steam-token")
+            SteamService.downloadFile(
+                onDownloadProgress = { setLoadingProgress(it / 1.0f) },
+                this,
+                context = context,
+                "steam-token.tzst"
+            ).await()
+        }
         val loadingMessage = if (container.containerVariant.equals(Container.GLIBC))
             context.getString(R.string.main_installing_glibc)
         else
@@ -1193,10 +1210,36 @@ fun preLaunchApp(
             return@launch
         }
 
+        // For GOG Games, sync cloud saves before launch
+        val isGOGGame = ContainerUtils.extractGameSourceFromContainerId(appId) == GameSource.GOG
+        if (isGOGGame) {
+            Timber.tag("GOG").i("[Cloud Saves] GOG Game detected for $appId — syncing cloud saves before launch")
+
+            // Sync cloud saves (download latest saves before playing)
+            Timber.tag("GOG").d("[Cloud Saves] Starting pre-game download sync for $appId")
+            val syncSuccess = app.gamenative.service.gog.GOGService.syncCloudSaves(
+                context = context,
+                appId = appId,
+            )
+
+            if (!syncSuccess) {
+                Timber.tag("GOG").w("[Cloud Saves] Download sync failed for $appId, proceeding with launch anyway")
+                // Don't block launch on sync failure - log warning and continue
+            } else {
+                Timber.tag("GOG").i("[Cloud Saves] Download sync completed successfully for $appId")
+            }
+
+            setLoadingDialogVisible(false)
+            onSuccess(context, appId)
+            return@launch
+        }
+
         // For Steam games, sync save files and check no pending remote operations are running
         val prefixToPath: (String) -> String = { prefix ->
             PathType.from(prefix).toAbsPath(context, gameId, SteamService.userSteamId!!.accountID)
         }
+        setLoadingMessage("Syncing cloud saves")
+        setLoadingProgress(-1f)
         val postSyncInfo = SteamService.beginLaunchApp(
             appId = gameId,
             prefixToPath = prefixToPath,
@@ -1204,6 +1247,10 @@ fun preLaunchApp(
             preferredSave = preferredSave,
             parentScope = this,
             isOffline = isOffline,
+            onProgress = { message, progress ->
+                setLoadingMessage(message)
+                setLoadingProgress(if (progress < 0) -1f else progress)
+            },
         ).await()
 
         setLoadingDialogVisible(false)

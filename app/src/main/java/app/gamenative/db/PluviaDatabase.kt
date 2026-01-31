@@ -1,5 +1,6 @@
 package app.gamenative.db
 
+import androidx.room.AutoMigration
 import androidx.room.Database
 import androidx.room.RoomDatabase
 import androidx.room.TypeConverters
@@ -9,20 +10,25 @@ import app.gamenative.data.FileChangeLists
 import app.gamenative.data.SteamApp
 import app.gamenative.data.SteamLicense
 import app.gamenative.data.CachedLicense
+import app.gamenative.data.DownloadingAppInfo
 import app.gamenative.data.EncryptedAppTicket
+import app.gamenative.data.GOGGame
 import app.gamenative.db.converters.AppConverter
 import app.gamenative.db.converters.ByteArrayConverter
 import app.gamenative.db.converters.FriendConverter
 import app.gamenative.db.converters.LicenseConverter
 import app.gamenative.db.converters.PathTypeConverter
 import app.gamenative.db.converters.UserFileInfoListConverter
+import app.gamenative.db.converters.GOGConverter
 import app.gamenative.db.dao.ChangeNumbersDao
 import app.gamenative.db.dao.FileChangeListsDao
 import app.gamenative.db.dao.SteamAppDao
 import app.gamenative.db.dao.SteamLicenseDao
 import app.gamenative.db.dao.AppInfoDao
 import app.gamenative.db.dao.CachedLicenseDao
+import app.gamenative.db.dao.DownloadingAppInfoDao
 import app.gamenative.db.dao.EncryptedAppTicketDao
+import app.gamenative.db.dao.GOGGameDao
 
 const val DATABASE_NAME = "pluvia.db"
 
@@ -35,9 +41,18 @@ const val DATABASE_NAME = "pluvia.db"
         FileChangeLists::class,
         SteamApp::class,
         SteamLicense::class,
+        GOGGame::class,
+        DownloadingAppInfo::class
     ],
-    version = 8,
-    exportSchema = false, // Should export once stable.
+    version = 10,
+
+    // For db migration, visit https://developer.android.com/training/data-storage/room/migrating-db-versions for more information
+    exportSchema = true, // It is better to handle db changes carefully, as GN is getting much more users.
+    autoMigrations = [
+        // For every version change, if it is automatic, please add a new migration here.
+        AutoMigration(from = 8, to = 9),
+        AutoMigration(from = 9, to = 10)
+    ]
 )
 @TypeConverters(
     AppConverter::class,
@@ -46,6 +61,7 @@ const val DATABASE_NAME = "pluvia.db"
     LicenseConverter::class,
     PathTypeConverter::class,
     UserFileInfoListConverter::class,
+    GOGConverter::class,
 )
 abstract class PluviaDatabase : RoomDatabase() {
 
@@ -62,4 +78,8 @@ abstract class PluviaDatabase : RoomDatabase() {
     abstract fun cachedLicenseDao(): CachedLicenseDao
 
     abstract fun encryptedAppTicketDao(): EncryptedAppTicketDao
+
+    abstract fun gogGameDao(): GOGGameDao
+
+    abstract fun downloadingAppInfoDao(): DownloadingAppInfoDao
 }

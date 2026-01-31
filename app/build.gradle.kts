@@ -10,6 +10,8 @@ plugins {
     alias(libs.plugins.kotlinter)
     alias(libs.plugins.ksp)
     alias(libs.plugins.secrets.gradle)
+    alias(libs.plugins.room)
+    id("com.chaquo.python") version "16.0.0"
 }
 
 val keystorePropertiesFile = rootProject.file("app/keystores/keystore.properties")
@@ -26,6 +28,10 @@ val posthogHost: String = project.findProperty("POSTHOG_HOST") as String? ?: Sys
 // Add Supabase URL and key as build-time variables
 val supabaseUrl: String = project.findProperty("SUPABASE_URL") as String? ?: System.getenv("SUPABASE_URL") ?: "https://your-project.supabase.co"
 val supabaseKey: String = project.findProperty("SUPABASE_KEY") as String? ?: System.getenv("SUPABASE_KEY") ?: ""
+
+room {
+    schemaDirectory("$projectDir/schemas")
+}
 
 android {
     namespace = "app.gamenative"
@@ -51,8 +57,8 @@ android {
         minSdk = 26
         targetSdk = 28
 
-        versionCode = 8
-        versionName = "0.6.2"
+        versionCode = 9
+        versionName = "0.7.0"
 
         buildConfigField("boolean", "GOLD", "false")
         fun secret(name: String) =
@@ -86,6 +92,7 @@ android {
             "fr",      // French
             "de",      // German
             "uk",      // Ukrainian
+            "it",      // Italian
             // TODO: Add more languages here using the ISO 639-1 locale code with regional qualifiers (e.g., "pt-rPT" for European Portuguese)
         )
 
@@ -149,18 +156,11 @@ android {
         buildConfig = true
     }
 
-    ksp {
-        arg("room.schemaLocation", "$projectDir/schemas")
-        arg("room.incremental", "true")
-    }
-
     packaging {
         resources {
             excludes += "/DebugProbesKt.bin"
             excludes += "/junit/runner/smalllogo.gif"
             excludes += "/junit/runner/logo.gif"
-
-            // Other excludes
             excludes += "/META-INF/versions/9/OSGI-INF/MANIFEST.MF"
         }
         jniLibs {
@@ -208,13 +208,32 @@ android {
     // }
 }
 
+chaquopy {
+    defaultConfig {
+        version = "3.11"  // Last Python version supporting armeabi-v7a (32-bit ARM)
+        pip {
+            // Install GOGDL dependencies
+            install("requests")
+        }
+    }
+    sourceSets {
+        getByName("main") {
+            srcDir("src/main/python")
+        }
+    }
+}
+
 dependencies {
     implementation(libs.material)
+
+    // Chrome Custom Tabs for GOG OAuth
+    implementation("androidx.browser:browser:1.8.0")
+
     // JavaSteam
     val localBuild = false // Change to 'true' needed when building JavaSteam manually
     if (localBuild) {
-        implementation(files("../../JavaSteam/build/libs/javasteam-1.8.0-SNAPSHOT.jar"))
-        implementation(files("../../JavaSteam/javasteam-depotdownloader/build/libs/javasteam-depotdownloader-1.8.0-SNAPSHOT.jar"))
+        implementation(files("../../JavaSteam/build/libs/javasteam-1.8.0-6-SNAPSHOT.jar"))
+        implementation(files("../../JavaSteam/javasteam-depotdownloader/build/libs/javasteam-depotdownloader-1.8.0-6-SNAPSHOT.jar"))
         implementation(libs.bundles.javasteam.dev)
     } else {
         implementation(libs.javasteam) {
@@ -276,8 +295,11 @@ dependencies {
     testImplementation(libs.robolectric)
     testImplementation(libs.mockito.core)
     testImplementation(libs.mockito.kotlin)
+    testImplementation(libs.mockk)
     testImplementation(libs.androidx.ui.test.junit4)
     testImplementation(libs.zstd.jni)
+    testImplementation(libs.orgJson)
+    testImplementation(libs.mockwebserver)
 
     // Add PostHog Android SDK dependency
     implementation("com.posthog:posthog-android:3.8.0")
@@ -290,6 +312,8 @@ dependencies {
     implementation("io.github.jan-tennert.supabase:realtime-kt")
 
     implementation("io.ktor:ktor-client-android:3.1.3")
+
+    implementation("com.auth0.android:jwtdecode:2.0.2")
 }
 
 val customVersion = 5

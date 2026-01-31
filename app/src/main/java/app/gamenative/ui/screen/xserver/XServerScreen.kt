@@ -56,15 +56,18 @@ import app.gamenative.PluviaApp
 import app.gamenative.PrefManager
 import app.gamenative.data.GameSource
 import app.gamenative.data.LaunchInfo
+import app.gamenative.data.LibraryItem
 import app.gamenative.data.SteamApp
 import app.gamenative.events.AndroidEvent
 import app.gamenative.events.SteamEvent
 import app.gamenative.service.SteamService
+import app.gamenative.service.gog.GOGService
 import app.gamenative.ui.component.settings.SettingsListDropdown
 import app.gamenative.ui.data.XServerState
 import app.gamenative.ui.theme.settingsTileColors
 import app.gamenative.utils.ContainerUtils
 import app.gamenative.utils.CustomGameScanner
+import app.gamenative.utils.SteamTokenLogin
 import app.gamenative.utils.SteamUtils
 import com.posthog.PostHog
 import com.winlator.alsaserver.ALSAClient
@@ -139,6 +142,7 @@ import java.nio.file.StandardCopyOption
 import java.nio.file.StandardCopyOption.REPLACE_EXISTING
 import java.util.Arrays
 import java.util.Locale
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.io.path.name
 import kotlin.text.lowercase
 import com.winlator.PrefManager as WinlatorPrefManager
@@ -146,6 +150,9 @@ import com.winlator.PrefManager as WinlatorPrefManager
 // Always re-extract drivers and DXVK on every launch to handle cases of container corruption
 // where games randomly stop working. Set to false once corruption issues are resolved.
 private const val ALWAYS_REEXTRACT = true
+
+// Guard to prevent duplicate game_exited events when multiple exit triggers fire simultaneously
+private val isExiting = AtomicBoolean(false)
 
 // TODO logs in composables are 'unstable' which can cause recomposition (performance issues)
 
@@ -870,10 +877,39 @@ fun XServerScreen(
         val manager = PluviaApp.inputControlsManager ?: InputControlsManager(context)
         val profileIdStr = container.getExtra("profileId", "0")
         val profileId = profileIdStr.toIntOrNull() ?: 0
-        val profile = if (profileId != 0) {
+
+        // Get profile, but don't load profile 0 directly (will duplicate if needed)
+        var profile = if (profileId != 0) {
             manager.getProfile(profileId)
         } else {
-            manager.getProfile(0)
+            null  // Will create new profile below
+        }
+
+        // Auto-create profile if using default (profile 0)
+        if (profile == null) {
+            val allProfiles = manager.getProfiles(false)
+            val sourceProfile = manager.getProfile(0)
+                ?: allProfiles.firstOrNull { it.id == 2 }
+                ?: allProfiles.firstOrNull()
+
+            if (sourceProfile != null) {
+                try {
+                    // Duplicate profile 0 to create game-specific profile
+                    profile = manager.duplicateProfile(sourceProfile)
+
+                    // Rename to game name
+                    val gameName = currentAppInfo?.name ?: container.name
+                    profile.setName("$gameName - Physical Controller")
+                    profile.save()
+
+                    // Associate with container
+                    container.putExtra("profileId", profile.id.toString())
+                    container.saveData()
+                } catch (e: Exception) {
+                    Timber.e(e, "Failed to auto-create profile for container ${container.name}")
+                    profile = sourceProfile  // Fallback
+                }
+            }
         }
 
         if (profile != null) {
@@ -889,6 +925,15 @@ fun XServerScreen(
                         profile = profile,
                         onDismiss = { showPhysicalControllerDialog = false },
                         onSave = {
+                            // Ensure controllersLoaded is true before saving
+                            // (addController sets the flag even if controller already exists)
+                            profile.addController("*")
+
+                            // Save profileId to container so it persists across launches
+                            container.putExtra("profileId", profile.id.toString())
+                            container.saveData()
+
+                            // Save profile (will now write controllers since controllersLoaded = true)
                             profile.save()
                             profile.loadControllers()
 
@@ -1413,7 +1458,16 @@ private fun setupXEnvironment(
         guestProgramLauncherComponent.box86Preset = container.box86Preset
         guestProgramLauncherComponent.box64Preset = container.box64Preset
         guestProgramLauncherComponent.setPreUnpack {
-            unpackExecutableFile(context, container.isNeedsUnpacking, container, appId, appLaunchInfo, guestProgramLauncherComponent, containerVariantChanged, onGameLaunchError)
+            unpackExecutableFile(
+                context = context,
+                needsUnpacking = container.isNeedsUnpacking,
+                container = container,
+                appId = appId,
+                appLaunchInfo = appLaunchInfo,
+                guestProgramLauncherComponent = guestProgramLauncherComponent,
+                containerVariantChanged = containerVariantChanged,
+                onError = onGameLaunchError
+            )
         }
 
         val enableGstreamer = container.isGstreamerWorkaround()
@@ -1486,6 +1540,19 @@ private fun setupXEnvironment(
     }
     environment.addComponent(guestProgramLauncherComponent)
 
+    // Moved here, as guestProgramLauncherComponent.environment is setup after addComponent()
+    if (container != null) {
+        if (container.isLaunchRealSteam) {
+            SteamTokenLogin(
+                steamId = PrefManager.steamUserSteamId64.toString(),
+                login = PrefManager.username,
+                token = PrefManager.refreshToken,
+                imageFs = imageFs,
+                guestProgramLauncherComponent = guestProgramLauncherComponent,
+            ).setupSteamFiles()
+        }
+    }
+
     // Log container settings before starting
     if (container != null) {
         Timber.i("---- Launching Container ----")
@@ -1511,7 +1578,7 @@ private fun setupXEnvironment(
     // Request encrypted app ticket for Steam games at launch time
     val isCustomGame = ContainerUtils.extractGameSourceFromContainerId(appId) == GameSource.CUSTOM_GAME
     val gameIdForTicket = ContainerUtils.extractGameIdFromContainerId(appId)
-    if (!bootToContainer && !isCustomGame && gameIdForTicket != null) {
+    if (!bootToContainer && !isCustomGame && gameIdForTicket != null && !container.isLaunchRealSteam) {
         CoroutineScope(Dispatchers.IO).launch {
             try {
                 val ticket = SteamService.instance?.getEncryptedAppTicket(gameIdForTicket)
@@ -1552,18 +1619,21 @@ private fun getWineStartCommand(
 
     Timber.tag("XServerScreen").d("appLaunchInfo is $appLaunchInfo")
 
-    // Check if this is a Custom Game
-    val isCustomGame = ContainerUtils.extractGameSourceFromContainerId(appId) == GameSource.CUSTOM_GAME
-    val steamAppId = ContainerUtils.extractGameIdFromContainerId(appId)
+    // Check game source
+    val gameSource = ContainerUtils.extractGameSourceFromContainerId(appId)
+    val isCustomGame = gameSource == GameSource.CUSTOM_GAME
+    val isGOGGame = gameSource == GameSource.GOG
+    val gameId = ContainerUtils.extractGameIdFromContainerId(appId)
 
-    if (!isCustomGame) {
+    if (!isCustomGame && !isGOGGame) {
+        // Steam-specific setup
         if (container.executablePath.isEmpty()){
-            container.executablePath = SteamService.getInstalledExe(steamAppId)
+            container.executablePath = SteamService.getInstalledExe(gameId)
             container.saveData()
         }
         if (!container.isUseLegacyDRM){
             // Create ColdClientLoader.ini file
-            SteamUtils.writeColdClientIni(steamAppId, container)
+            SteamUtils.writeColdClientIni(gameId, container)
         }
     }
 
@@ -1571,6 +1641,28 @@ private fun getWineStartCommand(
         "\"Z:/opt/apps/TestD3D.exe\""
     } else if (bootToContainer) {
         "\"wfm.exe\""
+    } else if (isGOGGame) {
+        // For GOG games, use GOGService to get the launch command
+        Timber.tag("XServerScreen").i("Launching GOG game: $gameId")
+
+        // Create a LibraryItem from the appId
+        val libraryItem = LibraryItem(
+            appId = appId,
+            name = "", // Name not needed for launch command
+            gameSource = GameSource.GOG
+        )
+
+        val gogCommand = GOGService.getGogWineStartCommand(
+            libraryItem = libraryItem,
+            container = container,
+            bootToContainer = bootToContainer,
+            appLaunchInfo = appLaunchInfo,
+            envVars = envVars,
+            guestProgramLauncherComponent = guestProgramLauncherComponent
+        )
+
+        Timber.tag("XServerScreen").i("GOG launch command: $gogCommand")
+        return "winhandler.exe $gogCommand"
     } else if (isCustomGame) {
         // For Custom Games, we can launch even without appLaunchInfo
         // Use the executable path from container config. If missing, try to auto-detect
@@ -1622,21 +1714,21 @@ private fun getWineStartCommand(
         Timber.tag("XServerScreen").w("appLaunchInfo is null for Steam game: $appId")
         "\"wfm.exe\""
     } else {
-        if (container.isLaunchRealSteam()) {
+        if (container.isLaunchRealSteam) {
             // Launch Steam with the applaunch parameter to start the game
             "\"C:\\\\Program Files (x86)\\\\Steam\\\\steam.exe\" -silent -vgui -tcp " +
-                    "-nobigpicture -nofriendsui -nochatui -nointro -applaunch $steamAppId"
+                    "-nobigpicture -nofriendsui -nochatui -nointro -applaunch $gameId"
         } else {
             var executablePath = ""
             if (container.executablePath.isNotEmpty()) {
                 executablePath = container.executablePath
             } else {
-                executablePath = SteamService.getInstalledExe(steamAppId)
+                executablePath = SteamService.getInstalledExe(gameId)
                 container.executablePath = executablePath
                 container.saveData()
             }
             if (container.isUseLegacyDRM) {
-                val appDirPath = SteamService.getAppDirPath(steamAppId)
+                val appDirPath = SteamService.getAppDirPath(gameId)
                 val executableDir = appDirPath + "/" + executablePath.substringBeforeLast("/", "")
                 guestProgramLauncherComponent.workingDir = File(executableDir);
                 Timber.i("Working directory is ${executableDir}")
@@ -1701,15 +1793,19 @@ private fun filterExecutablesForSteamless(executables: List<String>): List<Strin
 }
 private fun exit(winHandler: WinHandler?, environment: XEnvironment?, frameRating: FrameRating?, appInfo: SteamApp?, container: Container, onExit: () -> Unit, navigateBack: () -> Unit) {
     Timber.i("Exit called")
-    PostHog.capture(
-        event = "game_exited",
-        properties = mapOf(
-            "game_name" to appInfo?.name.toString(),
-            "session_length" to (frameRating?.sessionLengthSec ?: 0),
-            "avg_fps" to (frameRating?.avgFPS ?: 0.0),
-            "container_config" to container.containerJson,
-        ),
-    )
+    
+    // Prevent duplicate PostHog events when multiple exit triggers fire simultaneously
+    if (isExiting.compareAndSet(false, true)) {
+        PostHog.capture(
+            event = "game_exited",
+            properties = mapOf(
+                "game_name" to appInfo?.name.toString(),
+                "session_length" to (frameRating?.sessionLengthSec ?: 0),
+                "avg_fps" to (frameRating?.avgFPS ?: 0.0),
+                "container_config" to container.containerJson,
+            ),
+        )
+    }
 
     // Store session data in container metadata
     frameRating?.let { rating ->
@@ -1737,7 +1833,174 @@ private fun exit(winHandler: WinHandler?, environment: XEnvironment?, frameRatin
 }
 
 /**
- * Installs redistributables (vcredist, physx, XNA) from _CommonRedist folder
+ * Helper data class to hold redistributable installation context
+ */
+private data class RedistContext(
+    val commonRedistDir: File,
+    val driveLetter: Char,
+    val guestProgramLauncherComponent: GuestProgramLauncherComponent
+)
+
+/**
+ * Gets the _CommonRedist directory and drive letter for the game
+ * @return RedistContext if valid, null otherwise
+ */
+private fun getRedistDirectory(
+    appId: String,
+    container: Container,
+    guestProgramLauncherComponent: GuestProgramLauncherComponent
+): RedistContext? {
+    val steamAppId = ContainerUtils.extractGameIdFromContainerId(appId)
+    val gameDirPath = SteamService.getAppDirPath(steamAppId)
+    val commonRedistDir = File(gameDirPath, "_CommonRedist")
+
+    if (!commonRedistDir.exists() || !commonRedistDir.isDirectory()) {
+        Timber.tag("installRedist").i("_CommonRedist directory not found at ${commonRedistDir.absolutePath}")
+        return null
+    }
+
+    // Get the drive letter for the game directory
+    val drives = container.drives
+    val driveIndex = drives.indexOf(gameDirPath)
+    val driveLetter = if (driveIndex > 1) {
+        drives[driveIndex - 2]
+    } else {
+        Timber.tag("installRedist").e("Could not locate game drive for redistributables")
+        return null
+    }
+
+    return RedistContext(commonRedistDir, driveLetter, guestProgramLauncherComponent)
+}
+
+private fun installVcRedist(context: RedistContext) {
+        val vcredistDir = File(context.commonRedistDir, "vcredist")
+        if (vcredistDir.exists() && vcredistDir.isDirectory()) {
+            vcredistDir.walkTopDown()
+                .filter { it.isFile && it.name.equals("VC_redist.x64.exe", ignoreCase = true) }
+                .forEach { exeFile ->
+                    try {
+                        val relativePath = exeFile.relativeTo(context.commonRedistDir).path.replace('/', '\\')
+                        val drive = context.driveLetter
+                        val winePath = "$drive:\\_CommonRedist\\$relativePath"
+                        PluviaApp.events.emit(AndroidEvent.SetBootingSplashText("Installing Visual C++ Redistributables..."))
+                        Timber.i("Installing vcredist: $winePath")
+                        val cmd = "wine $winePath /quiet /norestart && wineserver -k"
+                        val output = context.guestProgramLauncherComponent.execShellCommand(cmd)
+                        Timber.i("vcredist installation output: $output")
+                    } catch (e: Exception) {
+                        Timber.e(e, "Failed to install vcredist ${exeFile.name}")
+                    }
+                }
+        }
+}
+
+private fun installDotNetFramework(context: RedistContext) {
+    val dotnetDirs = listOf("dotNetFx", "dotnet", "DotNet")
+
+    for (dirName in dotnetDirs) {
+        val dotnetDir = File(context.commonRedistDir, dirName)
+        if (!dotnetDir.exists() || !dotnetDir.isDirectory()) continue
+
+        dotnetDir.walkTopDown()
+            .filter { it.isFile &&
+                (it.name.startsWith("dotNetFx", ignoreCase = true) ||
+                 it.name.contains(".NET Framework", ignoreCase = true) ||
+                 it.name.startsWith("NDP", ignoreCase = true)) &&
+                it.name.endsWith(".exe", ignoreCase = true) }
+            .forEach { exeFile ->
+                try {
+                    val relativePath = exeFile.relativeTo(context.commonRedistDir).path.replace('/', '\\')
+                    val winePath = "${context.driveLetter}:\\_CommonRedist\\$relativePath"
+                    PluviaApp.events.emit(AndroidEvent.SetBootingSplashText("Installing .NET Framework..."))
+                    Timber.i("Installing .NET Framework: $winePath")
+                    val cmd = "wine $winePath /q /norestart && wineserver -k"
+                    val output = context.guestProgramLauncherComponent.execShellCommand(cmd)
+                    Timber.i(".NET Framework installation output: $output")
+                } catch (e: Exception) {
+                    Timber.e(e, "Failed to install .NET Framework ${exeFile.name}")
+                }
+            }
+    }
+}
+
+/**
+ * Installs OpenAL redistributables (oalinst.exe) (https://www.openal.org/)
+ * Helps with 3D audio implementations between 2001-2010
+ */
+private fun installOpenAL(context: RedistContext) {
+    val openalDir = File(context.commonRedistDir, "OpenAL")
+    if (!openalDir.exists() || !openalDir.isDirectory()) return
+
+    val openalInstaller = openalDir.walkTopDown()
+        .filter { it.isFile &&
+            (it.name.equals("oalinst.exe", ignoreCase = true) ||
+             it.name.startsWith("OpenAL", ignoreCase = true)) &&
+            it.name.endsWith(".exe", ignoreCase = true) }
+        .firstOrNull()
+
+    openalInstaller?.let { exeFile ->
+        try {
+            val relativePath = exeFile.relativeTo(context.commonRedistDir).path.replace('/', '\\')
+            val winePath = "${context.driveLetter}:\\_CommonRedist\\$relativePath"
+            PluviaApp.events.emit(AndroidEvent.SetBootingSplashText("Installing OpenAL..."))
+            Timber.i("Installing OpenAL: $winePath")
+            val cmd = "wine $winePath /s && wineserver -k"
+            val output = context.guestProgramLauncherComponent.execShellCommand(cmd)
+            Timber.i("OpenAL installation output: $output")
+        } catch (e: Exception) {
+            Timber.e(e, "Failed to install OpenAL ${exeFile.name}")
+        }
+    }
+}
+
+private fun installPhysX(context: RedistContext) {
+    val physxDir = File(context.commonRedistDir, "PhysX")
+    if (physxDir.exists() && physxDir.isDirectory()) {
+        physxDir.walkTopDown()
+            .filter { it.isFile && it.name.startsWith("PhysX", ignoreCase = true) &&
+                        it.name.endsWith(".msi", ignoreCase = true) }
+            .forEach { msiFile ->
+                try {
+                    val relativePath = msiFile.relativeTo(context.commonRedistDir).path.replace('/', '\\')
+                    val drive = context.driveLetter
+                    val winePath = "$drive:\\_CommonRedist\\$relativePath"
+                    PluviaApp.events.emit(AndroidEvent.SetBootingSplashText("Installing PhysX..."))
+                    Timber.i("Installing PhysX: $winePath")
+                    val cmd = "wine msiexec /i $winePath /quiet /norestart && wineserver -k"
+                    val output = context.guestProgramLauncherComponent.execShellCommand(cmd)
+                    Timber.i("PhysX installation output: $output")
+                } catch (e: Exception) {
+                    Timber.e(e, "Failed to install PhysX ${msiFile.name}")
+                }
+            }
+    }
+}
+
+private fun installXNAFramework(context: RedistContext) {
+    val xnaDir = File(context.commonRedistDir, "xnafx")
+    if (xnaDir.exists() && xnaDir.isDirectory()) {
+        xnaDir.walkTopDown()
+            .filter { it.isFile && it.name.startsWith("xna", ignoreCase = true) &&
+                        it.name.endsWith(".msi", ignoreCase = true) }
+            .forEach { msiFile ->
+                try {
+                    val relativePath = msiFile.relativeTo(context.commonRedistDir).path.replace('/', '\\')
+                    val drive = context.driveLetter
+                    val winePath = "$drive:\\_CommonRedist\\$relativePath"
+                    PluviaApp.events.emit(AndroidEvent.SetBootingSplashText("Installing XNA Framework..."))
+                    Timber.i("Installing XNA: $winePath")
+                    val cmd = "wine msiexec /i $winePath /quiet /norestart && wineserver -k"
+                    val output = context.guestProgramLauncherComponent.execShellCommand(cmd)
+                    Timber.i("XNA installation output: $output")
+                } catch (e: Exception) {
+                    Timber.e(e, "Failed to install XNA ${msiFile.name}")
+                }
+            }
+    }
+}
+
+/**
+ * Installs redistributables from _CommonRedist folder
  * if shared depots are present and the redistributable executables exist.
  */
 private fun installRedistributables(
@@ -1758,96 +2021,27 @@ private fun installRedistributables(
         }
 
         if (sharedDepots.isEmpty()) {
-            Timber.i("No shared depots found, skipping redistributable installation")
+            Timber.tag("installRedist").i("No shared depots found, skipping redistributable installation")
             return
         }
 
-        Timber.i("Found ${sharedDepots.size} shared depot(s), checking for redistributables")
+        Timber.tag("installRedist").i("Found ${sharedDepots.size} shared depot(s), checking for redistributables")
 
-        // Get game directory path
-        val gameDirPath = SteamService.getAppDirPath(steamAppId)
-        val commonRedistDir = File(gameDirPath, "_CommonRedist")
-
-        if (!commonRedistDir.exists() || !commonRedistDir.isDirectory()) {
-            Timber.i("_CommonRedist directory not found at ${commonRedistDir.absolutePath}, skipping redistributable installation")
+        // Get redistributable directory context
+        val redistContext = getRedistDirectory(appId, container, guestProgramLauncherComponent) ?: run {
+            Timber.tag("installRedist").i("Could not set up redistributable context, skipping installation")
             return
         }
 
-        // Get the drive letter for the game directory
-        val drives = container.drives
-        val driveIndex = drives.indexOf(gameDirPath)
-        val drive = if (driveIndex > 1) {
-            drives[driveIndex - 2]
-        } else {
-            Timber.e("Could not locate game drive for redistributables")
-            return
-        }
+        installVcRedist(redistContext)
+        installDotNetFramework(redistContext)
+        installOpenAL(redistContext)
+        installPhysX(redistContext)
+        installXNAFramework(redistContext)
 
-        // Find and install vcredist executables (only 64-bit: VC_redist.x64.exe)
-        val vcredistDir = File(commonRedistDir, "vcredist")
-        if (vcredistDir.exists() && vcredistDir.isDirectory()) {
-            vcredistDir.walkTopDown()
-                .filter { it.isFile && it.name.equals("VC_redist.x64.exe", ignoreCase = true) }
-                .forEach { exeFile ->
-                    try {
-                        val relativePath = exeFile.relativeTo(commonRedistDir).path.replace('/', '\\')
-                        val winePath = "$drive:\\_CommonRedist\\$relativePath"
-                        PluviaApp.events.emit(AndroidEvent.SetBootingSplashText("Installing Visual C++ Redistributables..."))
-                        Timber.i("Installing vcredist: $winePath")
-                        val cmd = "wine $winePath /quiet /norestart && wineserver -k"
-                        val output = guestProgramLauncherComponent.execShellCommand(cmd)
-                        Timber.i("vcredist installation output: $output")
-                    } catch (e: Exception) {
-                        Timber.e(e, "Failed to install vcredist ${exeFile.name}")
-                    }
-                }
-        }
-
-        // Find and install PhysX redistributables (.msi files starting with "PhysX")
-        val physxDir = File(commonRedistDir, "PhysX")
-        if (physxDir.exists() && physxDir.isDirectory()) {
-            physxDir.walkTopDown()
-                .filter { it.isFile && it.name.startsWith("PhysX", ignoreCase = true) &&
-                         it.name.endsWith(".msi", ignoreCase = true) }
-                .forEach { msiFile ->
-                    try {
-                        val relativePath = msiFile.relativeTo(commonRedistDir).path.replace('/', '\\')
-                        val winePath = "$drive:\\_CommonRedist\\$relativePath"
-                        PluviaApp.events.emit(AndroidEvent.SetBootingSplashText("Installing PhysX..."))
-                        Timber.i("Installing PhysX: $winePath")
-                        val cmd = "wine msiexec /i $winePath /quiet /norestart && wineserver -k"
-                        val output = guestProgramLauncherComponent.execShellCommand(cmd)
-                        Timber.i("PhysX installation output: $output")
-                    } catch (e: Exception) {
-                        Timber.e(e, "Failed to install PhysX ${msiFile.name}")
-                    }
-                }
-        }
-
-        // Find and install XNA Framework redistributables (.msi files starting with "xna")
-        val xnaDir = File(commonRedistDir, "xnafx")
-        if (xnaDir.exists() && xnaDir.isDirectory()) {
-            xnaDir.walkTopDown()
-                .filter { it.isFile && it.name.startsWith("xna", ignoreCase = true) &&
-                         it.name.endsWith(".msi", ignoreCase = true) }
-                .forEach { msiFile ->
-                    try {
-                        val relativePath = msiFile.relativeTo(commonRedistDir).path.replace('/', '\\')
-                        val winePath = "$drive:\\_CommonRedist\\$relativePath"
-                        PluviaApp.events.emit(AndroidEvent.SetBootingSplashText("Installing XNA Framework..."))
-                        Timber.i("Installing XNA: $winePath")
-                        val cmd = "wine msiexec /i $winePath /quiet /norestart && wineserver -k"
-                        val output = guestProgramLauncherComponent.execShellCommand(cmd)
-                        Timber.i("XNA installation output: $output")
-                    } catch (e: Exception) {
-                        Timber.e(e, "Failed to install XNA ${msiFile.name}")
-                    }
-                }
-        }
-
-        Timber.i("Finished checking for redistributables")
+        Timber.tag("installRedist").i("Finished checking for redistributables")
     } catch (e: Exception) {
-        Timber.e(e, "Error in installRedistributables: ${e.message}")
+        Timber.tag("installRedist").e(e, "Error in installRedistributables: ${e.message}")
     }
 }
 
@@ -1879,7 +2073,7 @@ private fun unpackExecutableFile(
         try {
             installRedistributables(context, container, appId, guestProgramLauncherComponent, imageFs)
         } catch (e: Exception) {
-            Timber.e(e, "Error installing redistributables: ${e.message}")
+            Timber.tag("installRedist").e(e, "Error installing redistributables: ${e.message}")
         }
     }
     if (!needsUnpacking){
@@ -2005,7 +2199,8 @@ private fun unpackExecutableFile(
                         Files.copy(unpackedExe.toPath(), exe.toPath(), REPLACE_EXISTING)
                         Timber.i("Successfully moved files for $windowsPath")
                     } else {
-                        val errorMsg = "Either original exe or unpacked exe does not exist for $windowsPath. Original: ${exe.exists()}, Unpacked: ${unpackedExe.exists()}"
+                        val errorMsg =
+                            "Either original exe or unpacked exe does not exist for $windowsPath. Original: ${exe.exists()}, Unpacked: ${unpackedExe.exists()}"
                         Timber.w(errorMsg)
                     }
                 } catch (e: Exception) {
