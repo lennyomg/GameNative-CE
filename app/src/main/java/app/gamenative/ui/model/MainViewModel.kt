@@ -21,7 +21,6 @@ import app.gamenative.ui.data.MainState
 import app.gamenative.ui.screen.PluviaScreen
 import app.gamenative.utils.ContainerUtils
 import app.gamenative.utils.IntentLaunchManager
-import app.gamenative.ui.screen.PluviaScreen
 import app.gamenative.utils.CustomGameScanner
 import app.gamenative.utils.SteamUtils
 import app.gamenative.utils.UpdateInfo
