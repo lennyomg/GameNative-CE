@@ -316,5 +316,5 @@ dependencies {
     implementation("com.auth0.android:jwtdecode:2.0.2")
 }
 
-val customVersion = 5
+val customVersion = 9
 android.defaultConfig.versionCode = android.defaultConfig.versionCode!! * 100 + customVersion
