@@ -33,6 +33,8 @@ import coil.memory.MemoryCache
 import coil.request.CachePolicy
 import app.gamenative.events.AndroidEvent
 import app.gamenative.service.SteamService
+import app.gamenative.service.gog.GOGService
+import app.gamenative.service.epic.EpicService
 import app.gamenative.ui.PluviaMain
 import app.gamenative.ui.enums.Orientation
 import app.gamenative.utils.AnimatedPngDecoder
@@ -246,9 +248,20 @@ class MainActivity : ComponentActivity() {
             isChangingConfigurations,
         )
 
-        if (SteamService.isConnected && !SteamService.isLoggedIn && !isChangingConfigurations && !SteamService.isGameRunning) {
+        if (SteamService.isConnected && !SteamService.isLoggedIn && !isChangingConfigurations && !SteamService.keepAlive) {
             Timber.i("Stopping Steam Service")
             SteamService.stop()
+        }
+
+        if (GOGService.isRunning && !isChangingConfigurations) {
+            Timber.i("Stopping GOG Service")
+            GOGService.stop()
+        }
+
+        // Stop EpicService when app is destroyed (unless config change)
+        if (EpicService.isRunning && !isChangingConfigurations) {
+            Timber.i("Stopping EpicService - app destroyed")
+            EpicService.stop()
         }
     }
 
@@ -258,15 +271,29 @@ class MainActivity : ComponentActivity() {
         SteamService.autoStopWhenIdle = false
 
         // Resume game if it was running
-        if (SteamService.isGameRunning) {
+        if (SteamService.keepAlive) {
             PluviaApp.xEnvironment?.onResume()
             Timber.d("Game resumed")
         }
+
+        // Restart GOG service if it went down
+        if (GOGService.hasStoredCredentials(this) && !GOGService.isRunning) {
+            Timber.i("GOG service was down on resume - restarting")
+            GOGService.start(this)
+        }
+
+        // Restart EpicService if it went down and user is authenticated
+        if (EpicService.hasStoredCredentials(this) &&
+            !EpicService.isRunning) {
+            Timber.i("EpicService was down on resume - restarting")
+            EpicService.start(this)
+        }
+
         PostHog.capture(event = "app_foregrounded")
     }
 
     override fun onPause() {
-        if (SteamService.isGameRunning) {
+        if (SteamService.keepAlive) {
             PluviaApp.xEnvironment?.onPause()
             Timber.d("Game paused due to app backgrounded")
         }
@@ -282,16 +309,43 @@ class MainActivity : ComponentActivity() {
         // enable auto-stop behavior if backgrounded
         SteamService.autoStopWhenIdle = true
 
+        Timber.d(
+            "onStop - Index: %d, Connected: %b, Logged-In: %b, Changing-Config: %b, Keep Alive: %b, Is Importing: %b",
+            index,
+            SteamService.isConnected,
+            SteamService.isLoggedIn,
+            isChangingConfigurations,
+            SteamService.keepAlive,
+            SteamService.isImporting,
+        )
         // stop SteamService only if no downloads or sync are in progress
         if (!isChangingConfigurations &&
             SteamService.isConnected &&
             !SteamService.hasActiveOperations() &&
             !SteamService.isLoginInProgress &&
-            !SteamService.isGameRunning &&
+            !SteamService.keepAlive &&
             !SteamService.isImporting
         ) {
             Timber.i("Stopping SteamService - no active operations")
             SteamService.stop()
+        }
+
+        // Stop GOGService if running and no downloads in progress
+        if (GOGService.isRunning && !isChangingConfigurations) {
+            if(!GOGService.hasActiveOperations()) {
+                Timber.i("Stopping GOG Service - no active operations")
+                GOGService.stop()
+            }
+        }
+
+        // Stop EpicService if running, unless there are active downloads or sync operations
+        if (EpicService.isRunning && !isChangingConfigurations) {
+            if (!EpicService.hasActiveOperations()) {
+                Timber.i("Stopping EpicService - no active operations")
+                EpicService.stop()
+            } else {
+                Timber.d("EpicService kept running - has active operations")
+            }
         }
     }
 
@@ -317,7 +371,7 @@ class MainActivity : ComponentActivity() {
         //  Since LibraryScreen uses its own navigation system, this will need to be re-worked accordingly.
         if (!eventDispatched) {
             if (event.keyCode == KeyEvent.KEYCODE_BACK && event.action == KeyEvent.ACTION_DOWN) {
-                if (SteamService.isGameRunning){
+                if (SteamService.keepAlive){
                     PluviaApp.events.emit(AndroidEvent.BackPressed)
                     eventDispatched = true
                 }
