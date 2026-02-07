@@ -232,6 +232,13 @@ fun XServerScreen(
     onGameLaunchError: ((String) -> Unit)? = null,
 ) {
     Timber.i("Starting up XServerScreen")
+
+    val finalNavigateBack: () -> Unit = if (execArgs != null && execArgs.isNotEmpty()) {
+        { PluviaApp.events.emit(AndroidEvent.EndProcess) }
+    } else {
+        navigateBack
+    }
+
     val context = LocalContext.current
     val view = LocalView.current
     val imm = remember(context) {
@@ -386,7 +393,7 @@ fun XServerScreen(
                                     currentAppInfo,
                                     container,
                                     onExit,
-                                    navigateBack,
+                                    finalNavigateBack,
                                 )
                             }
                             break
@@ -421,12 +428,6 @@ fun XServerScreen(
         }
 
         Timber.i("BackHandler")
-
-        val finalNavigateBack: () -> Unit = if (execArgs != null && execArgs.isNotEmpty()) {
-            { PluviaApp.events.emit(AndroidEvent.EndProcess) }
-        } else {
-            navigateBack
-        }
 
         exit(xServerView!!.getxServer().winHandler, PluviaApp.xEnvironment, frameRating, currentAppInfo, container, onExit, finalNavigateBack)
     }
